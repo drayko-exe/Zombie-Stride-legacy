@@ -1,0 +1,357 @@
+-- Script Universal Completo para Roblox (Unificado)
+-- Ativação via tecla "E"
+-- Funciona em qualquer executor (Synapse X, Krnl, Fluxus, etc)
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+
+-- Configurações
+local ANIMATION_ID = "rbxassetid://113685905137377"
+local activeFOV = 110
+local normalFOV = 90
+local isActive = false
+local animTrack = nil
+local bindName = "FOV_Lock_System"
+
+-- Variáveis globais para controle
+_G.FOVConnection = nil
+_G.CamChangeConnection = nil
+local animBlockConnection = nil -- Armazena a conexão do bloqueador de Crouch/Slide
+
+-- ===== ANIMAÇÃO =====
+local function stopAnimation()
+    if animTrack then
+        animTrack:Stop()
+        animTrack = nil
+    end
+end
+
+local function playAnimationLoop()
+    while Character and Character.Parent and isActive do
+        local humanoid = Character:FindFirstChild("Humanoid")
+        if not humanoid then break end
+        
+        local animator = humanoid:FindFirstChild("Animator")
+        if not animator then break end
+        
+        -- Para qualquer animação anterior
+        for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+            if track.Name == "ForceAnimation" then
+                track:Stop()
+            end
+        end
+        
+        -- Cria nova animação
+        local animation = Instance.new("Animation")
+        animation.AnimationId = ANIMATION_ID
+        animation.Name = "ForceAnimation"
+        
+        -- Carrega e toca
+        animTrack = animator:LoadAnimation(animation)
+        animTrack.Looped = true
+        animTrack:Play()
+        
+        -- Espera enquanto o character existe
+        while Character and Character.Parent and isActive and animTrack and animTrack.IsPlaying do
+            task.wait(0.1)
+        end
+        
+        task.wait(0.1)
+    end
+    
+    stopAnimation()
+end
+
+-- ===== EMOTESPEED =====
+local function createEmoteSpeed()
+    local myName = LocalPlayer.Name
+    local myPlayer = workspace.Game.Players:FindFirstChild(myName)
+    
+    if myPlayer then
+        local statChanges = myPlayer:FindFirstChild("StatChanges")
+        if not statChanges then
+            statChanges = Instance.new("Folder")
+            statChanges.Name = "StatChanges"
+            statChanges.Parent = myPlayer
+        end
+        
+        local speed = statChanges:FindFirstChild("Speed")
+        if not speed then
+            speed = Instance.new("Folder")
+            speed.Name = "Speed"
+            speed.Parent = statChanges
+        end
+        
+        local emoteSpeed = speed:FindFirstChild("EmoteSpeed")
+        if not emoteSpeed then
+            emoteSpeed = Instance.new("NumberValue")
+            emoteSpeed.Name = "EmoteSpeed"
+            emoteSpeed.Value = 1
+            emoteSpeed.Parent = speed
+        else
+            emoteSpeed.Value = 1
+        end
+        
+        return true
+    end
+    
+    return false
+end
+
+local function removeEmoteSpeed()
+    local myName = LocalPlayer.Name
+    local myPlayer = workspace.Game.Players:FindFirstChild(myName)
+    
+    if myPlayer then
+        local statChanges = myPlayer:FindFirstChild("StatChanges")
+        if statChanges then
+            local speed = statChanges:FindFirstChild("Speed")
+            if speed then
+                local emoteSpeed = speed:FindFirstChild("EmoteSpeed")
+                if emoteSpeed then
+                    emoteSpeed:Destroy()
+                    print("🗑️ EmoteSpeed removido!")
+                end
+            end
+        end
+    end
+end
+
+-- ===== MOUSELOCK OFFSET =====
+local function setupMouseLockOffset()
+    local playerScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+    
+    if playerScripts then
+        local mouseLockOffset = playerScripts:FindFirstChild("MouseLockOffset")
+        
+        if mouseLockOffset and mouseLockOffset:IsA("Vector3Value") then
+            mouseLockOffset.Value = Vector3.new(0, 0, -1.0)
+        elseif not mouseLockOffset then
+            mouseLockOffset = Instance.new("Vector3Value")
+            mouseLockOffset.Name = "MouseLockOffset"
+            mouseLockOffset.Value = Vector3.new(0, 0, -1.0)
+            mouseLockOffset.Parent = playerScripts
+        end
+    end
+end
+
+local function resetMouseLockOffset()
+    local playerScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+    
+    if playerScripts then
+        local mouseLockOffset = playerScripts:FindFirstChild("MouseLockOffset")
+        
+        if mouseLockOffset and mouseLockOffset:IsA("Vector3Value") then
+            mouseLockOffset.Value = Vector3.new(0, 1.5, 0)
+            print("🔄 MouseLockOffset resetado!")
+        end
+    end
+end
+
+-- ===== FOV =====
+local function setupFOV()
+    pcall(function()
+        RunService:UnbindFromRenderStep(bindName)
+    end)
+    
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    
+    local function apply()
+        if isActive then
+            camera.FieldOfView = activeFOV
+        end
+    end
+    
+    RunService:BindToRenderStep(bindName, Enum.RenderPriority.Camera.Value + 1, apply)
+    
+    if _G.FOVConnection then 
+        _G.FOVConnection:Disconnect() 
+    end
+    
+    _G.FOVConnection = camera:GetPropertyChangedSignal("FieldOfView"):Connect(apply)
+    
+    if _G.CamChangeConnection then 
+        _G.CamChangeConnection:Disconnect() 
+    end
+    
+    _G.CamChangeConnection = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+        camera = workspace.CurrentCamera
+        apply()
+    end)
+    
+    apply()
+end
+
+local function resetFOV()
+    local camera = workspace.CurrentCamera
+    if camera then
+        camera.FieldOfView = normalFOV
+    end
+end
+
+-- ===== NOVO: BLOQUEADOR DE CROUCH e SLIDE =====
+local function iniciarBloqueioAnimacoes()
+    if not Character then return end
+    local humanoid = Character:FindFirstChild("Humanoid")
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChild("Animator")
+    if not animator then return end
+    
+    local animsParaRemover = {"Crouch", "Slide"}
+    
+    local function verificarETreinarTrack(track)
+        if track and track.Stop then
+            local anim = track.Animation
+            if anim then
+                local nome = anim.Name or ""
+                local id = anim.AnimationId or ""
+                
+                for _, palavra in pairs(animsParaRemover) do
+                    if string.find(nome, palavra) or string.find(id, palavra) then
+                        track:Stop()
+                        track:Destroy()
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Limpa as que já estão tocando no momento da ativação
+    for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+        verificarETreinarTrack(track)
+    end
+    
+    -- Remove objetos diretos se existirem
+    for _, palavra in pairs(animsParaRemover) do
+        for _, obj in pairs(humanoid:GetChildren()) do
+            if obj:IsA("Animation") and (string.find(obj.Name, palavra) or string.find(obj.AnimationId or "", palavra)) then
+                obj:Destroy()
+            end
+        end
+    end
+    
+    -- Liga o monitoramento contínuo enquanto o sistema estiver ativo
+    if animBlockConnection then animBlockConnection:Disconnect() end
+    animBlockConnection = animator.AnimationPlayed:Connect(verificarETreinarTrack)
+end
+
+local function pararBloqueioAnimacoes()
+    if animBlockConnection then
+        animBlockConnection:Disconnect()
+        animBlockConnection = nil
+        print("❌ Monitoramento de Crouch/Slide desativado!")
+    end
+end
+
+
+-- ===== ATIVAR/DESATIVAR TUDO =====
+local function activateEverything()
+    if isActive then return end
+    
+    isActive = true
+    print("========================================")
+    print("✅ SISTEMA ATIVADO!")
+    print("========================================")
+    
+    -- Inicia animação
+    task.spawn(playAnimationLoop)
+    
+    -- Configura EmoteSpeed
+    task.spawn(function()
+        local attempts = 0
+        while isActive and attempts < 20 do
+            if createEmoteSpeed() then
+                print("✅ EmoteSpeed criado/configurado!")
+                break
+            end
+            attempts = attempts + 1
+            task.wait(1)
+        end
+    end)
+    
+    -- Configura MouseLockOffset
+    setupMouseLockOffset()
+    print("✅ MouseLockOffset zerado!")
+    
+    -- Configura FOV
+    setupFOV()
+    print("✅ FOV alterado para " .. activeFOV)
+    
+    -- Ativa o bloqueador de Crouch/Slide (Evade)
+    iniciarBloqueioAnimacoes()
+    print("✅ Bloqueador de Crouch/Slide Ativado!")
+    
+    print("========================================")
+end
+
+local function deactivateEverything()
+    if not isActive then return end
+    
+    isActive = false
+    
+    -- Para animação
+    stopAnimation()
+    print("❌ Animação para!")
+    
+    -- Remove EmoteSpeed
+    removeEmoteSpeed()
+    print("❌ EmoteSpeed removido!")
+    
+    -- Reseta MouseLockOffset
+    resetMouseLockOffset()
+    print("❌ MouseLockOffset resetado!")
+    
+    -- Reseta FOV para 90
+    resetFOV()
+    print("❌ FOV resetado para " .. normalFOV)
+    
+    -- Desliga o monitoramento de Crouch/Slide
+    pararBloqueioAnimacoes()
+    
+    print("========================================")
+    print("❌ SISTEMA DESATIVADO!")
+    print("========================================")
+end
+
+-- ===== TECLA E =====
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.KeyCode == Enum.KeyCode.E then
+        if isActive then
+            deactivateEverything()
+        else
+            activateEverything()
+        end
+    end
+end)
+
+-- ===== MONITORAMENTO DO CHARACTER =====
+LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+    Character = newCharacter
+    
+    if isActive then
+        -- Reinicia animações e o bloqueador se o personagem renascer
+        stopAnimation()
+        pararBloqueioAnimacoes()
+        task.wait(0.5)
+        if isActive then
+            task.spawn(playAnimationLoop)
+            iniciarBloqueioAnimacoes()
+        end
+    end
+end)
+
+-- Aguarda o jogo carregar
+task.wait(2)
+
+print("========================================")
+print("✅ Script Universal Completo + Bloqueador Carregado!")
+print("🎮 Pressione 'E' para ATIVAR tudo")
+print("🎮 Pressione 'E' novamente para DESATIVAR tudo")
+print("========================================")
